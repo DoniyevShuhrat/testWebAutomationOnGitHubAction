@@ -24,29 +24,62 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wget curl unzip xvfb
 
-      - name: Install Chrome
+      - name: Setup Chrome and ChromeDriver
         run: |
+          # Chrome o'rnatish
           wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
           echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
-
-      - name: Get Chrome version and install matching ChromeDriver
-        run: |
-          CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | awk -F'.' '{print $1}')
-          echo "Chrome version: $CHROME_VERSION"
           
-          # ChromeDriver ni manual ravishda yuklab olamiz
-          CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION")
-          echo "ChromeDriver version: $CHROMEDRIVER_VERSION"
+          # Chrome versiyasini olish
+          CHROME_VERSION=$(google-chrome --version | awk '{print $3}')
+          echo "Installed Chrome version: $CHROME_VERSION"
           
-          wget -O chromedriver.zip "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip"
+          # ChromeDriver uchun major versiyani ajratib olish
+          CHROME_MAJOR_VERSION=$(echo $CHROME_VERSION | cut -d'.' -f1)
+          echo "Chrome major version: $CHROME_MAJOR_VERSION"
+          
+          # ChromeDriver versiyasini aniqlash
+          if [ "$CHROME_MAJOR_VERSION" -ge "115" ]; then
+            # Chrome 115+ uchun yangi API
+            CHROMEDRIVER_VERSION=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_$CHROME_MAJOR_VERSION")
+            DOWNLOAD_URL="https://storage.googleapis.com/chrome-for-testing-public/$CHROMEDRIVER_VERSION/linux64/chromedriver-linux64.zip"
+            echo "Using new API. ChromeDriver version: $CHROMEDRIVER_VERSION"
+          else
+            # Eski Chrome versiyalari uchun
+            CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_MAJOR_VERSION")
+            DOWNLOAD_URL="https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip"
+            echo "Using legacy API. ChromeDriver version: $CHROMEDRIVER_VERSION"
+          fi
+          
+          # ChromeDriver yuklab olish va o'rnatish
+          echo "Downloading ChromeDriver from: $DOWNLOAD_URL"
+          wget -O chromedriver.zip "$DOWNLOAD_URL"
+          
           unzip chromedriver.zip
-          sudo mv chromedriver /usr/local/bin/
+          
+          # Fayl nomini tekshirish va to'g'ri joylash
+          if [ -f "chromedriver-linux64/chromedriver" ]; then
+            sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
+          elif [ -f "chromedriver" ]; then
+            sudo mv chromedriver /usr/local/bin/
+          else
+            echo "ChromeDriver fayl topilmadi!"
+            ls -la
+            exit 1
+          fi
+          
           sudo chmod +x /usr/local/bin/chromedriver
           
-          # Verify installation
+          # O'rnatishni tekshirish
+          echo "Verifying installation..."
+          google-chrome --version
           chromedriver --version
+          
+          # Tozalash
+          rm -f chromedriver.zip
+          rm -rf chromedriver-linux64
 
       - name: Install Python dependencies
         run: |
@@ -60,14 +93,13 @@ jobs:
         env:
           HEADLESS: "1"
           DISPLAY: ":99"
-          CHROMEDRIVER_PATH: "/usr/local/bin/chromedriver"
         run: |
-          # Start virtual display
-          Xvfb :99 -screen 0 1920x1080x24 &
+          # Virtual display ishga tushirish
+          Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
           sleep 3
           
-          # Run tests
-          pytest -v -s --maxfail=1 --html=reports/report.html --self-contained-html
+          # Testlarni ishga tushirish
+          pytest -v -s --maxfail=1 --tb=short --html=reports/report.html --self-contained-html
 
       - name: Upload test reports
         if: always()

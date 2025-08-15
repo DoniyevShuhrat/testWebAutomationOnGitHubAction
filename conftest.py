@@ -5,72 +5,111 @@ import uuid
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 
 
 @pytest.fixture(scope="session")
 def driver():
-    """Chrome driver fixture for all tests"""
+    """Chrome driver fixture - GitHub Actions optimized"""
     options = Options()
 
-    # HEADLESS rejim - CI muhitda kerak
-    if os.getenv("HEADLESS", "1") in ("1", "true", "True"):
+    # GitHub Actions muhitini aniqlash
+    is_github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+    is_headless = os.getenv("HEADLESS", "1") in ("1", "true", "True")
+
+    if is_headless or is_github_actions:
         options.add_argument("--headless=new")
         print("🤖 Running in HEADLESS mode")
 
-    # CI muhitida kerakli flaglar
+    # GitHub Actions uchun optimal flaglar
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-plugins")
-    options.add_argument("--disable-images")
-    options.add_argument("--disable-javascript")
+    options.add_argument("--disable-web-security")
+    options.add_argument("--disable-features=VizDisplayCompositor")
     options.add_argument("--window-size=1920,1080")
-    options.add_argument("--remote-debugging-port=9222")
+    options.add_argument("--start-maximized")
 
-    # User data directory masalasini hal qilish
+    # Memory va performance optimization
+    options.add_argument("--memory-pressure-off")
+    options.add_argument("--max_old_space_size=4096")
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-renderer-backgrounding")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+
+    # User data directory
     user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_user_data_{uuid.uuid4()}")
     options.add_argument(f"--user-data-dir={user_data_dir}")
 
+    # Logging
+    options.add_argument("--log-level=3")  # ERROR level only
+    options.add_experimental_option('excludeSwitches', ['enable-logging'])
+    options.add_experimental_option('useAutomationExtension', False)
+
+    driver = None
     try:
-        # ChromeDriverManager dan to'g'ri path olish
-        driver_path = ChromeDriverManager().install()
-        print(f"📍 ChromeDriver path: {driver_path}")
+        if is_github_actions:
+            # GitHub Actions muhitida
+            print("🔧 GitHub Actions muhitida ishlayapman...")
 
-        # To'g'ri chromedriver faylini topish
-        if os.path.isdir(driver_path):
-            # Agar directory bo'lsa, ichidan chromedriver faylini topamiz
-            for root, dirs, files in os.walk(driver_path):
-                for file in files:
-                    if file == 'chromedriver' or file.startswith('chromedriver'):
-                        if not file.endswith('.chromedriver') and 'THIRD_PARTY' not in file:
-                            driver_path = os.path.join(root, file)
-                            break
-
-        # Fayl mavjudligini va bajarilishini tekshirish
-        if not os.path.exists(driver_path):
-            raise Exception(f"ChromeDriver fayl topilmadi: {driver_path}")
-
-        # Fayl ruxsatlarini o'rnatish
-        os.chmod(driver_path, 0o755)
-        print(f"✅ ChromeDriver tayyor: {driver_path}")
-
-        # Chrome service yaratish
-        service = Service(driver_path)
+            # WebDriverManager bilan sinab ko'ramiz
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                service = Service(ChromeDriverManager().install())
+                print("✅ WebDriverManager muvaffaqiyatli")
+            except Exception as e:
+                print(f"⚠️ WebDriverManager muammosi: {e}")
+                # System ChromeDriver
+                service = Service("/usr/local/bin/chromedriver")
+        else:
+            # Lokal muhit
+            print("🏠 Lokal muhitda ishlayapman...")
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                service = Service(ChromeDriverManager().install())
+            except:
+                service = Service()  # PATH dan topadi
 
         # Driver yaratish
         driver = webdriver.Chrome(service=service, options=options)
+
+        # Timeouts
+        driver.set_page_load_timeout(30)
+        driver.implicitly_wait(10)
+
         print("✅ Chrome driver muvaffaqiyatli yaratildi")
+        print(f"📍 Driver executable path: {service.path}")
+
+        # Browser ma'lumotlari
+        try:
+            user_agent = driver.execute_script("return navigator.userAgent")
+            print(f"🌐 User Agent: {user_agent[:100]}...")
+        except:
+            pass
 
         yield driver
 
     except Exception as e:
         print(f"❌ Chrome driver initialization failed: {e}")
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
         raise
     finally:
+        # Cleanup
+        if driver:
+            try:
+                driver.quit()
+                print("🔒 Driver yopildi")
+            except:
+                pass
+
+        # Temporary files tozalash
         try:
-            driver.quit()
-            print("🔒 Driver yopildi")
+            import shutil
+            shutil.rmtree(user_data_dir, ignore_errors=True)
         except:
             pass
